@@ -1,19 +1,40 @@
-# S2M2 ROS
-A ROS node for [s2m2](https://github.com/junhong-3dv/s2m2) stereo depth model.
+# bigpose ROS
 
-## Dependencies
-- s2m2: setup following instructions this [s2m2 fork](https://github.com/MedericFourmy/s2m2)
-- ROS2 installation
 
-## Run node
-`ros2 run bigpose_ros s2m2_node`
+$ ros2 node info /bigpose_node
+/bigpose_node
+  Subscribers:
+    /camera/camera/color/camera_info: sensor_msgs/msg/CameraInfo
+    /camera/camera/color/image_raw: sensor_msgs/msg/Image
+    /camera/camera/infra1/camera_info: sensor_msgs/msg/CameraInfo
+    /camera/camera/infra1/image_rect_raw: sensor_msgs/msg/Image
+    /camera/camera/infra2/camera_info: sensor_msgs/msg/CameraInfo
+    /camera/camera/infra2/image_rect_raw: sensor_msgs/msg/Image
+    /tf: tf2_msgs/msg/TFMessage
+    /tf_static: tf2_msgs/msg/TFMessage
+  Publishers:
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /rosout: rcl_interfaces/msg/Log
+    /tf: tf2_msgs/msg/TFMessage
+  Service Servers:
+    /bigpose_node/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /bigpose_node/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /bigpose_node/get_parameters: rcl_interfaces/srv/GetParameters
+    /bigpose_node/list_parameters: rcl_interfaces/srv/ListParameters
+    /bigpose_node/set_parameters: rcl_interfaces/srv/SetParameters
+    /bigpose_node/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+    /detect: std_srvs/srv/Trigger
+    /refine: std_srvs/srv/Trigger
+  Service Clients:
 
-## Realsense Demo
-`ros2 launch realsense2_camera rs_launch.py enable_infra1:=true enable_infra2:=true pointcloud.enable:=true`  
+  Action Servers:
 
-Higher resolution:  
-`ros2 launch realsense2_camera rs_launch.py enable_infra1:=true enable_infra2:=true pointcloud.enable:=true rgb_camera.color_profile:=1280x720x6 depth_module.depth_profile:=1280x720x6 depth_module.infra_profile:=1280x720x6`
+  Action Clients:
 
-## TODO
-- launch file + config
-- rviz config for demo
+
+
+
+  [WARN] [1764603948.787982873] [bigpose_node]: detect_object_callback tf_stamped_wc:
+geometry_msgs.msg.Transform(
+    translation=geometry_msgs.msg.Vector3(x=-0.31461541301023366, y=0.5104838376301892, z=0.8170933207922224), 
+    rotation=geometry_msgs.msg.Quaternion(x=0.6347767709735721, y=-0.2634210104106203, z=0.7012567168184068, w=0.18949100090421686))

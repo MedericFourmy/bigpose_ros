@@ -6,39 +6,74 @@ import time
 import warnings
 warnings.filterwarnings("ignore")
 
-import cv2
-import torch
 import numpy as np
+import quaternion
+import open3d as o3d
 
-# S2M2
 from s2m2.s2m2 import load_model
 from s2m2.config import S2M2_PRETRAINED_WEIGHTS_PATH
 
+from happypose.toolbox.inference.types import ObservationTensor
+
 import rclpy
 from rclpy.node import Node
-from cv_bridge import CvBridge
 
+from std_msgs.msg import Header
 from message_filters import Subscriber, ApproximateTimeSynchronizer
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from geometry_msgs.msg import TransformStamped, Transform
 from std_srvs.srv import Trigger
 import sensor_msgs_py.point_cloud2 as pc2
-from tf2_ros import Buffer, TransformListener
+from tf2_ros import Buffer, TransformListener, TransformBroadcaster, LookupException, ConnectivityException, ExtrapolationException
+from cv_bridge import CvBridge
 
-from bigpose_ros.s2m2_utils import image_crop, image_pad, depth_to_pointcloud
-from bigpose_msgs.srv import GetPose
+from bigpose_ros.s2m2_utils import get_disparity_map
+from bigpose_ros.detector import ZeroShotObjectDetector, pad_boxes
+from bigpose_ros.megapose_utils import create_pose_estimator_pylone, dets_2_happydets
+from bigpose_ros.icp_utils import create_o3d_poincloud_from_depth, orient_normals_toward_camera, crop_pcd_sphere, ICPConvergeCriteria, icp_registration_o3d
+from bigpose_ros.render_utils import extract_np_from_renderings, DEFAULT_RENDER_PARAMS, render_ts, get_panda3d_ambient
+from bigpose_msgs.srv import GetTransformStamped
 
+MARGIN_SPHERE_CROP = 1.1
 
 
 class BigPoseNode(Node):
     def __init__(self):
         super().__init__('bigpose_node')
+        self.device = "cuda"
+        self.object_id = "pylone_est"
+        self.world_frame_id = "fer_link0"
+        
+        # ----------------------------
+        # Load detector model
+        # ----------------------------
+        detector_model_id = "openmmlab-community/mm_grounding_dino_base_all"
+        self.detector = ZeroShotObjectDetector(detector_model_id, self.device)
+
+        # ----------------------------
+        # Load Megapose
+        # ----------------------------
+        self.model_path_obj = '/home/ros/sandbox_mf/ws_pylone/src/bigpose_ros/bigpose_ros/assets/meshes/pylone_but_better.obj'
+        # megapose_model_name = "megapose-1.0-RGB"
+        # megapose_model_name = "megapose-1.0-RGB-multi-hypothesis"
+        # megapose_model_name = "megapose-1.0-RGB-multi-hypothesis-bis"
+        megapose_model_name = "megapose-1.0-RGB-multi-hypothesis-icp"
+        self.pose_estimator, self.pose_model_info = create_pose_estimator_pylone(
+            megapose_model_name, 
+            self.object_id, 
+            self.model_path_obj, 
+            self.device,
+            SO3_grid_size_scale_down=2
+        )
+        self.renderer = self.pose_estimator.refiner_model.renderer
+        self.light_datas = [get_panda3d_ambient()]
+
         # ----------------------------
         # Load s2m2 stereo depth model
         # ----------------------------
         model_type = "S"  # select model type: S,M,L,XL
         allow_negative = False  # TODO: figure out what this is
         num_refine = 3
-        self.device = "cuda"
         # most of the compilation time happens 
         # when the model is first called, which can take > 10s
         # then, each call is 3-5x faster than non compiled version
@@ -56,77 +91,372 @@ class BigPoseNode(Node):
         # self.model_s2m2 = torch.compile(self.model_s2m2)
         self.get_logger().info(f"Loaded s2m2 model '{model_type}' on device {self.device}")
 
-        self.bridge = CvBridge()
-
-        # -----------------------------
-        # Subscribers Realsense (message_filters)
-        # -----------------------------
+        # ---------------------
+        # Subscribers Realsense
+        # ---------------------
+        topic_rgb_image = '/camera/camera/color/image_raw'
+        topic_rgb_info = '/camera/camera/color/camera_info'
         topic_left_image_rect = '/camera/camera/infra1/image_rect_raw'
         topic_left_info = '/camera/camera/infra1/camera_info'
         topic_right_image_rect = '/camera/camera/infra2/image_rect_raw'
         topic_right_info = '/camera/camera/infra2/camera_info'
+        self.rgb_image_sub = Subscriber(self, Image, topic_rgb_image)
+        self.rgb_info_sub = Subscriber(self, CameraInfo, topic_rgb_info)
         self.infra1_img_sub = Subscriber(self, Image, topic_left_image_rect)
         self.infra1_info_sub = Subscriber(self, CameraInfo, topic_left_info)
         self.infra2_img_sub = Subscriber(self, Image, topic_right_image_rect)
         self.infra2_info_sub = Subscriber(self, CameraInfo, topic_right_info)
-        # stored in place
-        self.infra1_img_msg = None
-        self.infra1_info_msg = None
-        self.infra2_img_msg = None
-        self.infra2_info_msg = None
+        self.rgb_img_msg: Image | None = None
+        self.rgb_info_msg: CameraInfo | None = None
+        self.infra1_img_msg: Image | None = None
+        self.infra1_info_msg: CameraInfo | None = None
+        self.infra2_img_msg: Image | None = None
+        self.infra2_info_msg: CameraInfo | None = None
+        self.bridge = CvBridge()
 
-        # tf needed to get the baseline
+        # -----------------------------------
+        # Sync callack for rgb and infra imgs
+        # -----------------------------------
+        sync_rgb_subs = [self.rgb_image_sub, self.rgb_info_sub]
+        self.ts = ApproximateTimeSynchronizer(sync_rgb_subs, queue_size=1, slop=0.05)
+        self.ts.registerCallback(self.sync_rgb_callback)
+        sync_infra_subs = [self.infra1_img_sub, self.infra1_info_sub, self.infra2_img_sub, self.infra2_info_sub]
+        self.ts = ApproximateTimeSynchronizer(sync_infra_subs, queue_size=1, slop=0.05)
+        self.ts.registerCallback(self.sync_infra_callback)
+
+        # ---------------------------------
+        # TF needed for the camera baseline
+        # ---------------------------------
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.baseline = None
+        self.tf_broadcaster = TransformBroadcaster(self)
 
-        # -----------------------------
-        # Approximate Time Sync
-        # -----------------------------
-        sync_topics = [self.infra1_img_sub, self.infra1_info_sub, self.infra2_img_sub, self.infra2_info_sub]
-        self.ts = ApproximateTimeSynchronizer(sync_topics, queue_size=1, slop=0.05)
-        self.ts.registerCallback(self.sync_callback)
-
-        # ---------------------------------
-        # Publishers S2M2 depth (for debug)
-        # ---------------------------------
-        topic_depth_info = '/camera/camera/depth_s2m2/camera_info'
-        topic_depth_image = '/camera/camera/depth_s2m2/depth'
-        self.depth_info_pub = self.create_publisher(CameraInfo, topic_depth_info, 1)
-        self.depth_pub = self.create_publisher(Image, topic_depth_image, 1)
-        self.topic_s2m2_points = '/camera/camera/depth_s2m2/points'
-        self.pc_pub = self.create_publisher(PointCloud2, self.topic_s2m2_points, 1)
+        # # ---------------------------------
+        # # Publishers S2M2 depth (for debug)
+        # # ---------------------------------
+        # topic_depth_info = '/camera/camera/depth_s2m2/camera_info'
+        # topic_depth_image = '/camera/camera/depth_s2m2/depth'
+        # self.depth_info_pub = self.create_publisher(CameraInfo, topic_depth_info, 1)
+        # self.depth_pub = self.create_publisher(Image, topic_depth_image, 1)
+        # self.topic_s2m2_points = '/camera/camera/depth_s2m2/points'
+        # self.pc_pub = self.create_publisher(PointCloud2, self.topic_s2m2_points, 1)
 
         # ----------------------------------
         # Detect/Refine object pose services
         # ----------------------------------
         self.detect_object_srv = self.create_service(Trigger, 'detect', self.detect_object_callback)
+        self.refine_object_srv = self.create_service(GetTransformStamped, 'refine', self.refine_object_callback)
+        self.timer_obj_tf = self.create_timer(0.1, self.publish_object_tf_callback)  # 10 Hz
+        self.tf_stamped_wo: TransformStamped | None = None
 
-    def sync_callback(self,
+        # --------------------
+        # reading object model
+        # --------------------
+        import trimesh
+        mesh = trimesh.load(self.model_path_obj)
+        self.mesh_radius = mesh.bounding_sphere.primitive.radius
+
+        self.marker_pub = self.create_publisher(Marker, '/visualization_marker', 10)
+        self.timer_obj_marker = self.create_timer(0.5, self.publish_object_marker_callback)
+
+    def sync_infra_callback(self,
             infra1_img_msg: Image,
             infra1_info_msg: CameraInfo,
             infra2_img_msg: Image,
             infra2_info_msg: CameraInfo
         ):
+        self.get_logger().info("INFRAS received")
         assert np.allclose(infra1_info_msg.k, infra2_info_msg.k), "Left and right images should have identical intrinsics"
         
-        left_frame = infra1_img_msg.header.frame_id
-        right_frame = infra2_img_msg.header.frame_id
+        self.infra1_img_msg = infra1_img_msg
+        self.infra1_info_msg = infra1_info_msg
+        self.infra2_img_msg = infra2_img_msg
+        self.infra2_info_msg = infra2_info_msg
 
-        baseline = self.get_stereo_baseline(left_frame, right_frame, infra1_img_msg.header.stamp)
-        if baseline is None:
-            self.get_logger().warn("Baseline unavailable — skipping this frame")
-            return
+    def sync_rgb_callback(self,
+        rgb_img_msg: Image,
+        rgb_info_msg: CameraInfo
+        ):
+        self.get_logger().info("RGB received")
+        self.rgb_img_msg = rgb_img_msg
+        self.rgb_info_msg = rgb_info_msg
         
     def detect_object_callback(self, request: Trigger.Request, response: Trigger.Response):
-        self.get_logger().warn("detect_object_callback")
-        pass
-        # TODO:
+        self.get_logger().warn("detect_object_callback called")
 
-    def refine_object_callback(self, request: GetPose.Request, response: GetPose.Response):
+        if self.rgb_img_msg is None:
+            msg = "Did not receive first RGB frame, return."
+            self.get_logger().warn(msg)
+            response.message = msg
+            response.success = False
+            return response
+        
+        header_rgb = self.rgb_img_msg.header
+        try:
+            rgb_np = self.bridge.imgmsg_to_cv2(self.rgb_img_msg, desired_encoding='passthrough')
+        except Exception as e:
+            self.get_logger().error(f"cv_bridge conversion failed: {e}")
+            return
+        K_rgb = (self.rgb_info_msg.k).reshape((3,3))
+        self.get_logger().warn(f"detect_object_callback {self.world_frame_id} -> {header_rgb.frame_id}")
+
+        tf_stamped_wc = self.get_tf(self.world_frame_id, header_rgb.frame_id, header_rgb.stamp)
+        if tf_stamped_wc is None: return
+        self.get_logger().warn(f"detect_object_callback tf_stamped_wc:\n{tf_stamped_wc.transform}")
+
+        # 2D detection
+        PROMPT = "a black and gray object with holes"
+        text_labels = [[PROMPT]]
+        self.get_logger().warn("detect_object_callback running 2D detector...")
+        results = self.detector.predict(rgb_np, text_labels)
+        self.get_logger().warn("detect_object_callback detected!")
+        nb_dets = len(results[0]["scores"])
+        scores = results[0]["scores"]
+        boxes = results[0]["boxes"]
+        labels = [self.object_id for _ in range(nb_dets)]
+
+        # 3D pose estimation
+        h, w, _ = rgb_np.shape
+        boxes_pad = pad_boxes(boxes, w, h, pixpad=5)
+        detections = dets_2_happydets(boxes_pad, scores, labels)
+        obs = ObservationTensor.from_numpy(rgb_np, None, K_rgb).to(self.device)
+        self.get_logger().warn("detect_object_callback running Megapose...")
+        data_TCO_final, extra_data = self.pose_estimator.run_inference_pipeline(
+            obs, detections=detections,
+            n_refiner_iterations=self.pose_model_info["inference_parameters"]["n_refiner_iterations"],
+            n_pose_hypotheses=self.pose_model_info["inference_parameters"]["n_pose_hypotheses"],
+        )
+        self.get_logger().warn("detect_object_callback Megapose done!")
+
+        # TODO: add scoring + reject step
+        # select the best pose
+        T_co = data_TCO_final.poses[0].cpu().numpy()
+        T_wc = transform_to_np_mat(tf_stamped_wc.transform)
+        
+        # compose forward kinematics and object estimation to get object in "world" frame
+        T_wo = T_wc @ T_co
+
+        tf_stamped_wo = TransformStamped()
+        tf_stamped_wo.header = Header()
+        tf_stamped_wo.header.stamp = self.rgb_img_msg.header.stamp
+        tf_stamped_wo.header.frame_id = self.world_frame_id
+        tf_stamped_wo.child_frame_id = self.object_id
+        tf_stamped_wo.transform = np_mat_to_transform(T_wo)
+        self.tf_stamped_wo = tf_stamped_wo  # update attribute -> will be published on tf
+
+        response.message = "Object detection successful!"
+        response.success = True
+        return response
+
+    def refine_object_callback(self, request: GetTransformStamped.Request, response: GetTransformStamped.Response):
         self.get_logger().warn("refine_object_callback")
-        pass
-        # TODO:
+
+        if self.tf_stamped_wo is None:
+            self.get_logger().error("Object pose was not initialized, cannot refine!!")
+            return response  
+
+        infra1_frame = self.infra1_img_msg.header.frame_id
+        infra2_frame = self.infra2_img_msg.header.frame_id
+        img_time = self.infra1_img_msg.header.stamp
+        baseline = self.get_stereo_baseline(infra1_frame, infra2_frame, self.infra1_img_msg.header.stamp)
+        if baseline is None:
+            self.get_logger().error("Couldn't read stereo baseline, returning")
+
+        # get current T_camera_object transform
+        # -------------------------------------
+        tf_infra1_object = self.get_tf(infra1_frame, self.object_id, img_time)
+        tf_world_infra1 = self.get_tf(self.world_frame_id, infra1_frame, img_time)
+        T_co_init = transform_to_np_mat(tf_infra1_object.transform)
+        T_wc = transform_to_np_mat(tf_world_infra1.transform)
+        # T_wo_init = transform_to_np_mat(self.tf_stamped_wo.transform)  # for debug?
+
+        # S2M2 depth prediction
+        # ---------------------
+        infra1 = self.bridge.imgmsg_to_cv2(self.infra1_img_msg, desired_encoding='mono8')
+        infra2 = self.bridge.imgmsg_to_cv2(self.infra2_img_msg, desired_encoding='mono8')
+        assert infra1.shape == infra2.shape
+        h, w = infra1.shape 
+        disp = get_disparity_map(self.model_s2m2, infra1, infra2, self.device)  # (H,W), f32
+        fx = self.infra1_info_msg.k[0]
+        depth = baseline * fx / disp  # metric depth
+        depth = depth.cpu().numpy()  # fp32
+
+        # Open3D depth refinement
+        # -----------------------
+        voxel_size = 0.005
+        dist_thresh_factor = 3.0
+        icp_method = "point2plane"
+
+        # create point cloud from measured depth
+        K_infra1 = self.infra1_info_msg.k.reshape((3,3))
+        pcd_ct = create_o3d_poincloud_from_depth(depth, K_infra1)
+        pcd_ct = crop_pcd_sphere(pcd_ct, center=T_co_init[:3,3], radius=self.mesh_radius, margin=MARGIN_SPHERE_CROP)
+        pcd_ct.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(3.0*voxel_size, 40))
+
+        # create point cloud from object model (render then backproject)
+        renderings = self.renderer.render([self.object_id], render_ts(T_co_init), render_ts(K_infra1), [self.light_datas], (h, w), **DEFAULT_RENDER_PARAMS)
+        ren = extract_np_from_renderings(renderings, 0)
+        pcd_cp = create_o3d_poincloud_from_depth(ren["depth"], K_infra1)
+        pcd_cp.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(3.0*voxel_size, 40))
+        pcd_cp = orient_normals_toward_camera(pcd_cp)
+
+        # ICP refinement
+        pcd_cp = pcd_cp.voxel_down_sample(voxel_size=voxel_size)
+        pcd_ct = pcd_ct.voxel_down_sample(voxel_size=voxel_size)
+        icp_res_ct_cp = icp_registration_o3d(pcd_cp, pcd_ct, np.eye(4), dist_thresh_factor*voxel_size, icp_method, ICPConvergeCriteria())
+        T_ct_cp_icp = icp_res_ct_cp.transformation
+        T_co_ref = T_ct_cp_icp @ T_co_init
+
+        # update tf object pose and set the service response
+        # --------------------------------------------------
+        T_wo_refined = T_wc @ T_co_ref
+
+        tf_stamped_wo = TransformStamped()
+        tf_stamped_wo.header = Header()
+        tf_stamped_wo.header.stamp = self.infra1_img_msg.header.stamp
+        tf_stamped_wo.header.frame_id = self.world_frame_id
+        tf_stamped_wo.child_frame_id = self.object_id
+        tf_stamped_wo.transform = np_mat_to_transform(T_wo_refined)
+
+        self.tf_stamped_wo = tf_stamped_wo  # update attribute -> will be published on tf
+        response.transform = tf_stamped_wo  # also placed in the response
+
+        return response
+
+    def get_stereo_baseline(self, left_frame: str, right_frame: str, img_time: rclpy.time.Time) -> float:
+        """
+        Returns the baseline (meters) as the absolute translation along x
+        between left and right camera frames.
+        """
+        tf = self.get_tf(left_frame, right_frame, img_time)
+        if tf is None:
+            return None
+        baseline = abs(tf.transform.translation.x)
+        return baseline
+
+    def get_tf(self, target_frame: str, infra2_frame: str, img_time: rclpy.time.Time) -> TransformStamped:
+        """
+        Returns the tf transform from target_frame to infra2_frame.
+        """
+        try:
+            # lookup the transform from left → right
+            return self.tf_buffer.lookup_transform(
+                target_frame=target_frame,
+                source_frame=infra2_frame,
+                time=img_time,
+                timeout=rclpy.duration.Duration(seconds=0.2)
+            )
+            
+        except (LookupException, ConnectivityException, ExtrapolationException) as e:
+            self.get_logger().warn(f"Failed to lookup transform {target_frame} → {infra2_frame}: {e}")
+            return None
+        
+    def publish_object_tf_callback(self):
+        if self.tf_stamped_wo is not None:
+            # update timestamp of object transform using
+            # latest received RGB frame timestamp
+            self.tf_stamped_wo.header.stamp = self.infra1_img_msg.header.stamp
+            self.tf_broadcaster.sendTransform(self.tf_stamped_wo)
+
+    def publish_object_marker_callback(self):
+        if self.tf_stamped_wo is not None:
+            marker_object_mesh = make_mesh_marker("file://"+self.model_path_obj, self.tf_stamped_wo)
+            self.marker_pub.publish(marker_object_mesh)
+
+
+def transform_to_np_mat(transform: Transform) -> np.ndarray:
+    """
+    Convert a ROS 2 Transform to a 4x4 NumPy matrix.
+
+    Args:
+        transform: The ROS 2 Transform message.
+
+    Returns:
+        A 4x4 NumPy matrix representing the transform.
+    """
+    t = transform.translation
+    q = transform.rotation
+
+    # Create a 4x4 matrix from translation and quaternion
+    mat = np.eye(4)
+    mat[:3, 3] = [t.x, t.y, t.z]
+    # Convert quaternion to rotation matrix
+    mat[:3,:3] = quaternion.as_rotation_matrix(np.quaternion(q.w, q.x, q.y, q.z))
+    return mat
+
+
+def np_mat_to_transform(mat: np.ndarray) -> Transform:
+    """
+    Convert a 4x4 NumPy matrix to a ROS 2 Transform.
+
+    Args:
+        mat: The 4x4 NumPy matrix.
+        header_frame: The header.frame_id for the Transform.
+        child_frame: The child_frame_id for the Transform.
+        stamp: Optional timestamp for the header.
+
+    Returns:
+        A ROS 2 Transform message.
+    """
+    transform = Transform()
+
+    # Extract translation
+    transform.translation.x = mat[0, 3]
+    transform.translation.y = mat[1, 3]
+    transform.translation.z = mat[2, 3]
+
+    # Extract rotation as quaternion
+    R = mat[:3,:3]
+    q = quaternion.from_rotation_matrix(R)
+    transform.rotation.x = q.x
+    transform.rotation.y = q.y
+    transform.rotation.z = q.z
+    transform.rotation.w = q.w
+
+    return transform
+
+
+from visualization_msgs.msg import Marker
+from builtin_interfaces.msg import Duration
+from geometry_msgs.msg import Point
+
+
+def make_mesh_marker(mesh_path: str, tf: TransformStamped):
+    marker = Marker()
+    marker.header.stamp = tf.header.stamp
+    marker.header.frame_id = tf.header.frame_id
+
+    marker.ns = "object_mesh"
+    marker.id = 0
+    marker.type = Marker.MESH_RESOURCE
+    marker.mesh_resource = mesh_path     # e.g. "package://my_pkg/meshes/object.stl"
+    marker.mesh_use_embedded_materials = True
+
+    # Pose from TransformStamped
+    marker.pose.position = Point(
+        x=tf.transform.translation.x,
+        y=tf.transform.translation.y,
+        z=tf.transform.translation.z
+    )
+    marker.pose.orientation = tf.transform.rotation
+
+    # Scale (must be non-zero)
+    marker.scale.x = 1.0
+    marker.scale.y = 1.0
+    marker.scale.z = 1.0
+
+    # Lifetime (0 = forever)
+    marker.lifetime = Duration(sec=0, nanosec=0)
+
+    # Color (ignored if using embedded materials)
+    marker.color.r = 1.0
+    marker.color.g = 1.0
+    marker.color.b = 1.0
+    marker.color.a = 1.0
+
+    marker.action = Marker.ADD
+    return marker
+
 
 def main(args=None):
     rclpy.init(args=args)

@@ -2,7 +2,6 @@
 
 import os
 import math
-import time
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -14,7 +13,7 @@ import numpy as np
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-
+# TODO: check if useful
 import torch._dynamo
 torch._dynamo.config.verbose=True
 torch.backends.cudnn.benchmark = True
@@ -23,14 +22,34 @@ torch.manual_seed(0)
 torch.cuda.manual_seed(0)
 np.random.seed(0)
 
-import rclpy
-from rclpy.node import Node
-from cv_bridge import CvBridge
 
-from message_filters import Subscriber, ApproximateTimeSynchronizer
-from sensor_msgs.msg import CameraInfo, Image, PointCloud2
-import sensor_msgs_py.point_cloud2 as pc2
-from tf2_ros import Buffer, TransformListener, LookupException, ConnectivityException, ExtrapolationException
+
+def get_disparity_map(model_s2m2: torch.nn.Module, left: np.ndarray, right: np.ndarray, device):
+    # convert to RGB
+    if left.ndim == 2:
+        left = cv2.cvtColor(left, cv2.COLOR_GRAY2RGB)
+    if right.ndim == 2:
+        right = cv2.cvtColor(right, cv2.COLOR_GRAY2RGB)
+
+    left_torch = torch.tensor(left, device=device, dtype=torch.half).permute(2,0,1).unsqueeze(0)  # (H,W,3) f32 -> (1,3,H,W) f16
+    right_torch = torch.tensor(right, device=device, dtype=torch.half).permute(2,0,1).unsqueeze(0)  # (H,W,3) f32 -> (1,3,H,W) f16
+
+    # s2m2 model requires img dimensions divisible by 32 -> smooth pad the imgs
+    left_torch_pad = image_pad(left_torch, 32)  # (1,3,H,W) -> (1,3,H_new,W_new)
+    right_torch_pad = image_pad(right_torch, 32)  # (1,3,H,W) -> (1,3,H_new,W_new)
+
+    # predict disparity map in half precision
+    with torch.no_grad():
+        with torch.amp.autocast(enabled=True, device_type=device, dtype=torch.float16):
+            pred_disp, pred_occ, pred_conf = model_s2m2(left_torch_pad, right_torch_pad)  # (1,1,H,W)
+
+    # Remove padding
+    img_height, img_width = left.shape[:2]
+    pred_disp = image_crop(pred_disp, img_height, img_width)  # (1,1,H_new,W_new) -> (1,1,H,W) 
+    # pred_occ = image_crop(pred_occ, img_height, img_width)
+    # pred_conf = image_crop(pred_conf, img_height, img_width)
+
+    return pred_disp.squeeze(0).squeeze(0)  # (H,W)
 
 
 
