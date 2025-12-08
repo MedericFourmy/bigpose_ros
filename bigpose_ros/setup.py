@@ -15,6 +15,8 @@ setup(
             [f for f in glob("assets/meshes/*") if not os.path.isdir(f)],
         ),
         ("share/bigpose_ros/assets/meshes/textures_pylone_but_better", glob("assets/meshes/textures_pylone_but_better/*")),
+        ("share/bigpose_ros/launch", glob("launch/*")),
+        ("share/bigpose_ros/rviz", glob("rviz/*")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

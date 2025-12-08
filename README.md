@@ -24,4 +24,4 @@ bigpose_ros exposes 2 main services:
 `ros2 service call /refine bigpose_msgs/srv/GetTransformStamped`
 
 Rviz for debug:  
-`rviz2 --display-config src/bigpose_ros/bigpose_ros/rviz/debug.rviz`
+`ros2 launch bigpose_ros rviz_bigpose.py`
