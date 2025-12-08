@@ -53,7 +53,8 @@ class BigPoseNode(Node):
         # ----------------------------
         # Load Megapose
         # ----------------------------
-        self.model_path_obj = '/home/ros/sandbox_mf/ws_pylone/src/bigpose_ros/bigpose_ros/assets/meshes/pylone_but_better.obj'
+        package_share_directory = get_package_share_directory('bigpose_ros')
+        self.model_path_obj = os.path.join(package_share_directory, 'assets/meshes/pylone_but_better.obj')
         # megapose_model_name = "megapose-1.0-RGB"
         # megapose_model_name = "megapose-1.0-RGB-multi-hypothesis"
         # megapose_model_name = "megapose-1.0-RGB-multi-hypothesis-bis"
@@ -419,6 +420,7 @@ def np_mat_to_transform(mat: np.ndarray) -> Transform:
 from visualization_msgs.msg import Marker
 from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import Point
+from ament_index_python.packages import get_package_share_directory
 
 
 def make_mesh_marker(mesh_path: str, tf: TransformStamped):
