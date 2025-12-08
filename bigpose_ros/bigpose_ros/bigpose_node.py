@@ -9,6 +9,7 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import quaternion
 import open3d as o3d
+import trimesh  
 
 from s2m2.s2m2 import load_model
 from s2m2.config import S2M2_PRETRAINED_WEIGHTS_PATH
@@ -21,8 +22,12 @@ from rclpy.node import Node
 from std_msgs.msg import Header
 from message_filters import Subscriber, ApproximateTimeSynchronizer
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from geometry_msgs.msg import TransformStamped, Transform
+from geometry_msgs.msg import TransformStamped, Transform, Point
 from std_srvs.srv import Trigger
+from visualization_msgs.msg import Marker
+from builtin_interfaces.msg import Duration
+from ament_index_python.packages import get_package_share_directory
+
 import sensor_msgs_py.point_cloud2 as pc2
 from tf2_ros import Buffer, TransformListener, TransformBroadcaster, LookupException, ConnectivityException, ExtrapolationException
 from cv_bridge import CvBridge
@@ -153,7 +158,6 @@ class BigPoseNode(Node):
         # --------------------
         # reading object model
         # --------------------
-        import trimesh
         mesh = trimesh.load(self.model_path_obj)
         self.mesh_radius = mesh.bounding_sphere.primitive.radius
 
@@ -415,12 +419,6 @@ def np_mat_to_transform(mat: np.ndarray) -> Transform:
     transform.rotation.w = q.w
 
     return transform
-
-
-from visualization_msgs.msg import Marker
-from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import Point
-from ament_index_python.packages import get_package_share_directory
 
 
 def make_mesh_marker(mesh_path: str, tf: TransformStamped):
