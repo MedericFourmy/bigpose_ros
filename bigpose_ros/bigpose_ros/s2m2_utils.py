@@ -121,3 +121,19 @@ def depth_to_pointcloud(depth: np.ndarray, fx: float, fy: float, cx: float, cy: 
     return points
 
 
+def depth_to_pointcloud(depth: np.ndarray, fx: float, fy: float, cx: float, cy: float):
+    """
+    depth_mm: (H, W) depth in meters
+    returns Nx3 float32 array (X,Y,Z) in meters
+    """
+    h, w = depth.shape
+
+    # pixel coordinate grid
+    xs, ys = np.meshgrid(np.arange(w), np.arange(h))
+
+    # back project to 3D points
+    points = np.zeros((depth.shape[0], depth.shape[1], 3), dtype=depth.dtype)
+    points[:,:,0] = (xs - cx) * depth / fx  # X
+    points[:,:,1] = (ys - cy) * depth / fy  # Y
+    points[:,:,2] = depth  # Z
+    return points

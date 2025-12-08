@@ -32,7 +32,7 @@ import sensor_msgs_py.point_cloud2 as pc2
 from tf2_ros import Buffer, TransformListener, TransformBroadcaster, LookupException, ConnectivityException, ExtrapolationException
 from cv_bridge import CvBridge
 
-from bigpose_ros.s2m2_utils import get_disparity_map
+from bigpose_ros.s2m2_utils import get_disparity_map, depth_to_pointcloud
 from bigpose_ros.detector import ZeroShotObjectDetector, pad_boxes
 from bigpose_ros.megapose_utils import create_pose_estimator_pylone, dets_2_happydets
 from bigpose_ros.icp_utils import create_o3d_poincloud_from_depth, orient_normals_toward_camera, crop_pcd_sphere, ICPConvergeCriteria, icp_registration_o3d
@@ -137,15 +137,19 @@ class BigPoseNode(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = TransformBroadcaster(self)
 
-        # # ---------------------------------
-        # # Publishers S2M2 depth (for debug)
-        # # ---------------------------------
-        # topic_depth_info = '/camera/camera/depth_s2m2/camera_info'
-        # topic_depth_image = '/camera/camera/depth_s2m2/depth'
-        # self.depth_info_pub = self.create_publisher(CameraInfo, topic_depth_info, 1)
-        # self.depth_pub = self.create_publisher(Image, topic_depth_image, 1)
-        # self.topic_s2m2_points = '/camera/camera/depth_s2m2/points'
-        # self.pc_pub = self.create_publisher(PointCloud2, self.topic_s2m2_points, 1)
+        # ---------------------------------
+        # Publishers S2M2 depth (for debug)
+        # ---------------------------------
+        topic_depth_info = '/camera/camera/depth_s2m2/camera_info'
+        topic_depth_image = '/camera/camera/depth_s2m2/depth'
+        self.depth_info_pub = self.create_publisher(CameraInfo, topic_depth_info, 1)
+        self.depth_pub = self.create_publisher(Image, topic_depth_image, 1)
+        self.topic_s2m2_points = '/camera/camera/depth_s2m2/points'
+        self.pc_pub = self.create_publisher(PointCloud2, self.topic_s2m2_points, 1)
+        self.timer_s2m2_debug = self.create_timer(0.5, self.publish_object_s2m2_debug)  # 10 Hz
+        self.new_s2m2_depth_pub = True
+        self.depth_s2m2 = None
+        self.T_wc_s2m2 = None
 
         # ----------------------------------
         # Detect/Refine object pose services
@@ -161,7 +165,7 @@ class BigPoseNode(Node):
         mesh = trimesh.load(self.model_path_obj)
         self.mesh_radius = mesh.bounding_sphere.primitive.radius
 
-        self.marker_pub = self.create_publisher(Marker, '/visualization_marker', 10)
+        self.marker_pub = self.create_publisher(Marker, '/megapose_detection_marker', 10)
         self.timer_obj_marker = self.create_timer(0.5, self.publish_object_marker_callback)
 
     def sync_infra_callback(self,
@@ -326,6 +330,10 @@ class BigPoseNode(Node):
         self.tf_stamped_wo = tf_stamped_wo  # update attribute -> will be published on tf
         response.transform = tf_stamped_wo  # also placed in the response
 
+        self.depth_s2m2 = depth  # store for debug publishing.
+        self.T_wc_s2m2 = T_wc  # store for debug publishing.
+        self.new_s2m2_depth_pub = True  # flag to recompute pointcloud for debug publishing
+
         return response
 
     def get_stereo_baseline(self, left_frame: str, right_frame: str, img_time: rclpy.time.Time) -> float:
@@ -362,6 +370,39 @@ class BigPoseNode(Node):
             # latest received RGB frame timestamp
             self.tf_stamped_wo.header.stamp = self.infra1_img_msg.header.stamp
             self.tf_broadcaster.sendTransform(self.tf_stamped_wo)
+
+
+    def publish_object_s2m2_debug(self):
+        if self.depth_s2m2 is None: return
+        if self.pc_pub.get_subscription_count() == 0: return
+
+
+        # ----------------------------------------
+        # Publish point cloud from S2M2 depth
+        # ----------------------------------------
+        if self.new_s2m2_depth_pub:
+            self.get_logger().info("Recomputing pointcloud for S2M2 depth debug publishing")
+                
+            k = self.infra1_info_msg.k  # stored in row-major order
+            fx, fy, cx, cy = k[0], k[4], k[2], k[5]
+            points = depth_to_pointcloud(self.depth_s2m2, fx, fy, cx, cy)
+            # Remove invalid points (inf or NaN or zero depth)
+            points = points.reshape(-1,3)
+            valid = np.isfinite(points).all(axis=1) & (points[:, 2] > 0)
+            points = points[valid]   # (N, 3)
+
+            # Transform points to world frame
+            R_wc = self.T_wc_s2m2[:3, :3]
+            t_wc = self.T_wc_s2m2[:3, 3]
+            self.points_s2m2_world = (R_wc @ points.T).T + t_wc
+
+            depth_s2m2_header = self.infra1_info_msg.header
+            depth_s2m2_header.frame_id = self.world_frame_id
+            self.pc_s2m2_msg = pc2.create_cloud_xyz32(depth_s2m2_header, self.points_s2m2_world)
+        
+        # publish point cloud every time
+        self.new_s2m2_depth_pub = False
+        self.pc_pub.publish(self.pc_s2m2_msg)
 
     def publish_object_marker_callback(self):
         if self.tf_stamped_wo is not None:
