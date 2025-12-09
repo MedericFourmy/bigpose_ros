@@ -86,7 +86,7 @@ class BigPoseNode(Node):
         # then, each call is 3-5x faster than non compiled version
         # TODO: explore disk caching options
         torch_compile = False 
-        assert Path(S2M2_PRETRAINED_WEIGHTS_PATH).exists(), f"S2M2 pretrained weights not found at {S2M2_PRETRAINED_WEIGHTS_PATH}"
+        assert Path(S2M2_PRETRAINED_WEIGHTS_PATH).exists(), f"S2M2 pretrained weights not found at {S2M2_PRETRAINED_WEIGHTS_PATH}, set S2M2_PRETRAINED_WEIGHTS_PATH env var to the correct path."
         self.model_s2m2 = load_model(
             S2M2_PRETRAINED_WEIGHTS_PATH,
             model_type,
@@ -147,10 +147,13 @@ class BigPoseNode(Node):
         self.depth_info_pub = self.create_publisher(CameraInfo, topic_depth_info, 1)
         self.depth_pub = self.create_publisher(Image, topic_depth_image, 1)
         self.topic_s2m2_points = '/camera/camera/depth_s2m2/points'
-        self.pc_pub = self.create_publisher(PointCloud2, self.topic_s2m2_points, 1)
+        self.topic_pcd_icp = '/camera/camera/depth_s2m2/points_icp'
+        self.pc_s2m2_pub = self.create_publisher(PointCloud2, self.topic_s2m2_points, 1)
+        self.pc_icp_pub = self.create_publisher(PointCloud2, self.topic_pcd_icp, 1)
         self.timer_s2m2_debug = self.create_timer(0.5, self.publish_object_s2m2_debug)  # 10 Hz
         self.new_s2m2_depth_pub = True
         self.depth_s2m2 = None
+        self.pcd_ct = None
         self.T_wc_s2m2 = None
 
         # ----------------------------------
@@ -169,6 +172,11 @@ class BigPoseNode(Node):
 
         self.marker_pub = self.create_publisher(Marker, '/megapose_detection_marker', 10)
         self.timer_obj_marker = self.create_timer(0.5, self.publish_object_marker_callback)
+
+        # Declare ROS2 dynamic parameters
+        self.declare_parameter('voxel_size', 0.005)
+        self.declare_parameter('dist_thresh_factor', 3.0)
+        self.declare_parameter('icp_method', 'point2plane')
 
     def sync_infra_callback(self,
             infra1_img_msg: Image,
@@ -308,9 +316,9 @@ class BigPoseNode(Node):
 
         # Open3D depth refinement
         # -----------------------
-        voxel_size = 0.005
-        dist_thresh_factor = 3.0
-        icp_method = "point2plane"
+        voxel_size = self.get_parameter('voxel_size').value
+        dist_thresh_factor = self.get_parameter('dist_thresh_factor').value
+        icp_method = self.get_parameter('icp_method').value
 
         # create point cloud from measured depth
         K_infra1 = self.infra1_info_msg.k.reshape((3,3))
@@ -349,6 +357,7 @@ class BigPoseNode(Node):
         response.message = "Refinement successful!"
 
         self.depth_s2m2 = depth  # store for debug publishing.
+        self.pcd_ct = pcd_ct  # store for debug publishing.
         self.T_wc_s2m2 = T_wc  # store for debug publishing.
         self.new_s2m2_depth_pub = True  # flag to recompute pointcloud for debug publishing
 
@@ -389,11 +398,9 @@ class BigPoseNode(Node):
             self.tf_stamped_wo.header.stamp = self.infra1_img_msg.header.stamp
             self.tf_broadcaster.sendTransform(self.tf_stamped_wo)
 
-
     def publish_object_s2m2_debug(self):
-        if self.depth_s2m2 is None: return
-        if self.pc_pub.get_subscription_count() == 0: return
-
+        if self.depth_s2m2 is None or self.pcd_ct is None: return
+        if self.pc_s2m2_pub.get_subscription_count() == 0: return
 
         # ----------------------------------------
         # Publish point cloud from S2M2 depth
@@ -412,15 +419,20 @@ class BigPoseNode(Node):
             # Transform points to world frame
             R_wc = self.T_wc_s2m2[:3, :3]
             t_wc = self.T_wc_s2m2[:3, 3]
-            self.points_s2m2_world = (R_wc @ points.T).T + t_wc
+            points_s2m2_world = (R_wc @ points.T).T + t_wc
 
             depth_s2m2_header = self.infra1_info_msg.header
             depth_s2m2_header.frame_id = self.world_frame_id
-            self.pc_s2m2_msg = pc2.create_cloud_xyz32(depth_s2m2_header, self.points_s2m2_world)
-        
+            self.pc_s2m2_msg = pc2.create_cloud_xyz32(depth_s2m2_header, points_s2m2_world)
+            
+            # Also create point cloud from ICP refined depth
+            self.pcd_ct.transform(self.T_wc_s2m2)  # to world frame
+            self.pc_icp_msg = pc2.create_cloud_xyz32(depth_s2m2_header, np.asarray(self.pcd_ct.points))
+
         # publish point cloud every time
         self.new_s2m2_depth_pub = False
-        self.pc_pub.publish(self.pc_s2m2_msg)
+        self.pc_s2m2_pub.publish(self.pc_s2m2_msg)
+        self.pc_icp_pub.publish(self.pc_icp_msg)
 
     def publish_object_marker_callback(self):
         if self.tf_stamped_wo is not None:
