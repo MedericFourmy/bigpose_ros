@@ -10,6 +10,7 @@ setup(
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/bigpose_ros"]),
+        ("share/" + package_name, ["package.xml"]),
         (
             "share/bigpose_ros/assets/meshes",
             [f for f in glob("assets/meshes/*") if not os.path.isdir(f)],

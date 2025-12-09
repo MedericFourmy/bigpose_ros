@@ -2,3 +2,5 @@
 ---
 # Response
 geometry_msgs/TransformStamped transform
+string message
+bool success

@@ -2,6 +2,7 @@
 
 import os
 import math
+from pathlib import Path
 import time
 import warnings
 warnings.filterwarnings("ignore")
@@ -85,6 +86,7 @@ class BigPoseNode(Node):
         # then, each call is 3-5x faster than non compiled version
         # TODO: explore disk caching options
         torch_compile = False 
+        assert Path(S2M2_PRETRAINED_WEIGHTS_PATH).exists(), f"S2M2 pretrained weights not found at {S2M2_PRETRAINED_WEIGHTS_PATH}"
         self.model_s2m2 = load_model(
             S2M2_PRETRAINED_WEIGHTS_PATH,
             model_type,
@@ -262,6 +264,8 @@ class BigPoseNode(Node):
 
         if self.tf_stamped_wo is None:
             self.get_logger().error("Object pose was not initialized, cannot refine!!")
+            response.success = False
+            response.message = "Object pose was not initialized, cannot refine!!"
             return response  
 
         infra1_frame = self.infra1_img_msg.header.frame_id
@@ -270,11 +274,23 @@ class BigPoseNode(Node):
         baseline = self.get_stereo_baseline(infra1_frame, infra2_frame, self.infra1_img_msg.header.stamp)
         if baseline is None:
             self.get_logger().error("Couldn't read stereo baseline, returning")
+            response.success = False
+            response.message = "Couldn't read stereo baseline, returning"
+            return response
 
         # get current T_camera_object transform
         # -------------------------------------
         tf_infra1_object = self.get_tf(infra1_frame, self.object_id, img_time)
         tf_world_infra1 = self.get_tf(self.world_frame_id, infra1_frame, img_time)
+        if tf_infra1_object is None:
+            self.get_logger().error("Couldn't read tf_infra1_object transform")
+        if tf_world_infra1 is None:
+            self.get_logger().error("Couldn't read tf_world_infra1 transform")
+        if tf_infra1_object is None or tf_world_infra1 is None:
+            response.success = False
+            response.message = "Couldn't read required transforms, returning"
+            return response
+
         T_co_init = transform_to_np_mat(tf_infra1_object.transform)
         T_wc = transform_to_np_mat(tf_world_infra1.transform)
         # T_wo_init = transform_to_np_mat(self.tf_stamped_wo.transform)  # for debug?
@@ -329,6 +345,8 @@ class BigPoseNode(Node):
 
         self.tf_stamped_wo = tf_stamped_wo  # update attribute -> will be published on tf
         response.transform = tf_stamped_wo  # also placed in the response
+        response.success = True
+        response.message = "Refinement successful!"
 
         self.depth_s2m2 = depth  # store for debug publishing.
         self.T_wc_s2m2 = T_wc  # store for debug publishing.
