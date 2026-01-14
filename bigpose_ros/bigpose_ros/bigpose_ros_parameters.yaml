@@ -6,7 +6,7 @@ bigpose_ros:
     read_only: true
   object_frame_id:
     type: string
-    default_value: "pylone_est"
+    default_value: "pylone_link"
     description: "tf frame id of the detected object."
     read_only: true
   world_frame_id:

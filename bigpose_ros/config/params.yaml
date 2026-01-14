@@ -1,7 +1,7 @@
 /**:
   ros__parameters:
     device: "cuda"
-    object_frame_id: "pylone_est"
+    object_frame_id: "pylone_link"
     world_frame_id: "fer_link0"
     detector_model_id: "openmmlab-community/mm_grounding_dino_base_all"
     megapose: 
