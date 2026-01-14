@@ -66,7 +66,7 @@ class BigPoseNode(Node):
         package_share_directory = get_package_share_directory('bigpose_ros')
         self.model_path_obj = os.path.join(package_share_directory, self._params.megapose.mesh_megapose_relative_path)
         self.pose_estimator, self.pose_model_info = create_pose_estimator_pylone(
-            self._params.megapose_model_config, 
+            self._params.megapose.megapose_model_config,
             self._params.object_frame_id, 
             self.model_path_obj, 
             self._params.device,
@@ -85,7 +85,7 @@ class BigPoseNode(Node):
             self._params.s2m2.allow_negative,
             self._params.s2m2.num_refine,
         ).to(self._params.device).eval()
-        if self._params.torch_compile:
+        if self._params.s2m2.torch_compile:
             # TODO: explore disk caching options
             # most of the compilation time happens 
             # when the model is first called, which can take > 10s
