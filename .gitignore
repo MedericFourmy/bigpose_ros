@@ -2,3 +2,4 @@
 .vscode/
 
 bigpose_ros/assets
+bigpose_ros/bigpose_ros/bigpose_ros_parameters.py

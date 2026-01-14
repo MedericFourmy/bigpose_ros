@@ -1,0 +1,86 @@
+bigpose_ros:
+  device:
+    type: string
+    default_value: "cuda"
+    description: "Torch device name."
+    read_only: true
+  object_frame_id:
+    type: string
+    default_value: "pylone_est"
+    description: "tf frame id of the detected object."
+    read_only: true
+  world_frame_id:
+    type: string
+    default_value: "fer_link0"
+    description: "tf frame id of a fixed world frame."
+    read_only: true
+  detector_model_id:
+    type: string
+    default_value: "openmmlab-community/mm_grounding_dino_base_all"
+    description: "Huggingface id of the zero-shot 2d object detector."
+    read_only: true
+  megapose:
+    mesh_megapose_relative_path:
+      type: string
+      default_value: "assets/meshes/pylone_but_better.obj"
+      description: "Path of the object mesh used by megapose for 6D pose estimation, relative to the bigpose_ros package."
+      read_only: true
+    SO3_grid_size_scale_down:
+      type: int
+      default_value: 2
+      description: "Factor scaling down the number of coarse renders (the higher, the faster but the less precise)."
+      read_only: true
+      validation:
+        gt_eq<>: [1]
+  s2m2:
+    model_type:
+      type: string
+      default_value: "S"
+      description: "Type s2m2 that can be chosen, (S -> small but fast, XL -> large but a bit more precise)."
+      read_only: true
+      validation:
+        one_of<>: [["S","M","L","XL"]]
+    allow_negative:
+      type: bool
+      default_value: false
+      description: "TODO: figure out what this is."
+      read_only: true
+    num_refine:
+      type: int
+      default_value: 3
+      description: "TODO."
+      read_only: true
+      validation:
+        gt_eq<>: [1]
+    torch_compile:
+      type: bool
+      default_value: false
+      description: "Compile the s2m2 model (takes a long time during first call, then much faster)."
+      read_only: true
+  icp:
+    margin_sphere_crop:
+      type: double
+      default_value: 1.1
+      description: "Before ICP, crop the measured pointcloud beyond a sphere of radius object_radius*margin_sphere_crop."
+      read_only: true
+      validation:
+        gt_eq<>: [1.0]
+    voxel_size:
+      type: double
+      default_value: 0.005
+      description: "Voxel size used by open3d when downsampling the measured and rendered pointclouds."
+      read_only: true
+      validation:
+        gt_eq<>: [1]
+    dist_thresh_factor:
+      type: double
+      default_value: 3.0
+      description: "Use a threshold of voxel_size*dist_thresh_factor during the ICP nearest neighbor search step."
+      read_only: true
+    icp_method:
+      type: string
+      default_value: "point2plane"
+      description: "Type of ICP algorithm used."
+      read_only: true
+      validation:
+        one_of<>: [["point2point","point2plane","generalized"]]

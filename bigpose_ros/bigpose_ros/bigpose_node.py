@@ -42,19 +42,30 @@ from bigpose_msgs.srv import GetTransformStamped
 
 MARGIN_SPHERE_CROP = 1.1
 
+# Automatically generated file
+from bigpose_ros.bigpose_ros_parameters import bigpose_ros  # noqa: E402
+
 
 class BigPoseNode(Node):
     def __init__(self):
         super().__init__('bigpose_node')
-        self.device = "cuda"
-        self.object_id = "pylone_est"
-        self.world_frame_id = "fer_link0"
+
+        try:
+            self._param_listener = bigpose_ros.ParamListener(self)
+            self._params = self._param_listener.get_params()
+        except Exception as e:
+            self.get_logger().error(str(e))
+            raise e
+
+
+        self._params.object_frame_id = "pylone_est"
+        self._params.world_frame_id = "fer_link0"
         
         # ----------------------------
         # Load detector model
         # ----------------------------
         detector_model_id = "openmmlab-community/mm_grounding_dino_base_all"
-        self.detector = ZeroShotObjectDetector(detector_model_id, self.device)
+        self.detector = ZeroShotObjectDetector(detector_model_id, self._params.device)
 
         # ----------------------------
         # Load Megapose
@@ -67,9 +78,9 @@ class BigPoseNode(Node):
         megapose_model_name = "megapose-1.0-RGB-multi-hypothesis-icp"
         self.pose_estimator, self.pose_model_info = create_pose_estimator_pylone(
             megapose_model_name, 
-            self.object_id, 
+            self._params.object_frame_id, 
             self.model_path_obj, 
-            self.device,
+            self._params.device,
             SO3_grid_size_scale_down=2
         )
         self.renderer = self.pose_estimator.refiner_model.renderer
@@ -92,28 +103,22 @@ class BigPoseNode(Node):
             model_type,
             allow_negative,
             num_refine,
-        ).to(self.device).eval()
+        ).to(self._params.device).eval()
         if torch_compile:
             self.get_logger().info(f"Compiling s2m2 model...")
             self.model_s2m2.compile()
         # self.model_s2m2 = torch.compile(self.model_s2m2)
-        self.get_logger().info(f"Loaded s2m2 model '{model_type}' on device {self.device}")
+        self.get_logger().info(f"Loaded s2m2 model '{model_type}' on device {self._params.device}")
 
         # ---------------------
         # Subscribers Realsense
         # ---------------------
-        topic_rgb_image = '/camera/camera/color/image_raw'
-        topic_rgb_info = '/camera/camera/color/camera_info'
-        topic_left_image_rect = '/camera/camera/infra1/image_rect_raw'
-        topic_left_info = '/camera/camera/infra1/camera_info'
-        topic_right_image_rect = '/camera/camera/infra2/image_rect_raw'
-        topic_right_info = '/camera/camera/infra2/camera_info'
-        self.rgb_image_sub = Subscriber(self, Image, topic_rgb_image)
-        self.rgb_info_sub = Subscriber(self, CameraInfo, topic_rgb_info)
-        self.infra1_img_sub = Subscriber(self, Image, topic_left_image_rect)
-        self.infra1_info_sub = Subscriber(self, CameraInfo, topic_left_info)
-        self.infra2_img_sub = Subscriber(self, Image, topic_right_image_rect)
-        self.infra2_info_sub = Subscriber(self, CameraInfo, topic_right_info)
+        self.rgb_image_sub = Subscriber(self, Image, "color/image_raw")
+        self.rgb_info_sub = Subscriber(self, CameraInfo, "color/camera_info")
+        self.infra1_img_sub = Subscriber(self, Image, "infra1/image_rect_raw")
+        self.infra1_info_sub = Subscriber(self, CameraInfo, "infra1/camera_info")
+        self.infra2_img_sub = Subscriber(self, Image, "infra2/image_rect_raw")
+        self.infra2_info_sub = Subscriber(self, CameraInfo, "infra2/camera_info")
         self.rgb_img_msg: Image | None = None
         self.rgb_info_msg: CameraInfo | None = None
         self.infra1_img_msg: Image | None = None
@@ -170,7 +175,7 @@ class BigPoseNode(Node):
         mesh = trimesh.load(self.model_path_obj)
         self.mesh_radius = mesh.bounding_sphere.primitive.radius
 
-        self.marker_pub = self.create_publisher(Marker, '/megapose_detection_marker', 10)
+        self.marker_pub = self.create_publisher(Marker, 'megapose_detection_marker', 10)
         self.timer_obj_marker = self.create_timer(0.5, self.publish_object_marker_callback)
 
         # Declare ROS2 dynamic parameters
@@ -217,9 +222,9 @@ class BigPoseNode(Node):
             self.get_logger().error(f"cv_bridge conversion failed: {e}")
             return
         K_rgb = (self.rgb_info_msg.k).reshape((3,3))
-        self.get_logger().warn(f"detect_object_callback {self.world_frame_id} -> {header_rgb.frame_id}")
+        self.get_logger().warn(f"detect_object_callback {self._params.world_frame_id} -> {header_rgb.frame_id}")
 
-        tf_stamped_wc = self.get_tf(self.world_frame_id, header_rgb.frame_id, header_rgb.stamp)
+        tf_stamped_wc = self.get_tf(self._params.world_frame_id, header_rgb.frame_id, header_rgb.stamp)
         if tf_stamped_wc is None: return
         self.get_logger().warn(f"detect_object_callback tf_stamped_wc:\n{tf_stamped_wc.transform}")
 
@@ -232,13 +237,13 @@ class BigPoseNode(Node):
         nb_dets = len(results[0]["scores"])
         scores = results[0]["scores"]
         boxes = results[0]["boxes"]
-        labels = [self.object_id for _ in range(nb_dets)]
+        labels = [self._params.object_frame_id for _ in range(nb_dets)]
 
         # 3D pose estimation
         h, w, _ = rgb_np.shape
         boxes_pad = pad_boxes(boxes, w, h, pixpad=5)
         detections = dets_2_happydets(boxes_pad, scores, labels)
-        obs = ObservationTensor.from_numpy(rgb_np, None, K_rgb).to(self.device)
+        obs = ObservationTensor.from_numpy(rgb_np, None, K_rgb).to(self._params.device)
         self.get_logger().warn("detect_object_callback running Megapose...")
         data_TCO_final, extra_data = self.pose_estimator.run_inference_pipeline(
             obs, detections=detections,
@@ -258,8 +263,8 @@ class BigPoseNode(Node):
         tf_stamped_wo = TransformStamped()
         tf_stamped_wo.header = Header()
         tf_stamped_wo.header.stamp = self.rgb_img_msg.header.stamp
-        tf_stamped_wo.header.frame_id = self.world_frame_id
-        tf_stamped_wo.child_frame_id = self.object_id
+        tf_stamped_wo.header.frame_id = self._params.world_frame_id
+        tf_stamped_wo.child_frame_id = self._params.object_frame_id
         tf_stamped_wo.transform = np_mat_to_transform(T_wo)
         self.tf_stamped_wo = tf_stamped_wo  # update attribute -> will be published on tf
 
@@ -288,8 +293,8 @@ class BigPoseNode(Node):
 
         # get current T_camera_object transform
         # -------------------------------------
-        tf_infra1_object = self.get_tf(infra1_frame, self.object_id, img_time)
-        tf_world_infra1 = self.get_tf(self.world_frame_id, infra1_frame, img_time)
+        tf_infra1_object = self.get_tf(infra1_frame, self._params.object_frame_id, img_time)
+        tf_world_infra1 = self.get_tf(self._params.world_frame_id, infra1_frame, img_time)
         if tf_infra1_object is None:
             self.get_logger().error("Couldn't read tf_infra1_object transform")
         if tf_world_infra1 is None:
@@ -309,7 +314,7 @@ class BigPoseNode(Node):
         infra2 = self.bridge.imgmsg_to_cv2(self.infra2_img_msg, desired_encoding='mono8')
         assert infra1.shape == infra2.shape
         h, w = infra1.shape 
-        disp = get_disparity_map(self.model_s2m2, infra1, infra2, self.device)  # (H,W), f32
+        disp = get_disparity_map(self.model_s2m2, infra1, infra2, self._params.device)  # (H,W), f32
         fx = self.infra1_info_msg.k[0]
         depth = baseline * fx / disp  # metric depth
         depth = depth.cpu().numpy()  # fp32
@@ -327,7 +332,7 @@ class BigPoseNode(Node):
         pcd_ct.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(3.0*voxel_size, 40))
 
         # create point cloud from object model (render then backproject)
-        renderings = self.renderer.render([self.object_id], render_ts(T_co_init), render_ts(K_infra1), [self.light_datas], (h, w), **DEFAULT_RENDER_PARAMS)
+        renderings = self.renderer.render([self._params.object_frame_id], render_ts(T_co_init), render_ts(K_infra1), [self.light_datas], (h, w), **DEFAULT_RENDER_PARAMS)
         ren = extract_np_from_renderings(renderings, 0)
         pcd_cp = create_o3d_poincloud_from_depth(ren["depth"], K_infra1)
         pcd_cp.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(3.0*voxel_size, 40))
@@ -347,8 +352,8 @@ class BigPoseNode(Node):
         tf_stamped_wo = TransformStamped()
         tf_stamped_wo.header = Header()
         tf_stamped_wo.header.stamp = self.infra1_img_msg.header.stamp
-        tf_stamped_wo.header.frame_id = self.world_frame_id
-        tf_stamped_wo.child_frame_id = self.object_id
+        tf_stamped_wo.header.frame_id = self._params.world_frame_id
+        tf_stamped_wo.child_frame_id = self._params.object_frame_id
         tf_stamped_wo.transform = np_mat_to_transform(T_wo_refined)
 
         self.tf_stamped_wo = tf_stamped_wo  # update attribute -> will be published on tf
@@ -422,7 +427,7 @@ class BigPoseNode(Node):
             points_s2m2_world = (R_wc @ points.T).T + t_wc
 
             depth_s2m2_header = self.infra1_info_msg.header
-            depth_s2m2_header.frame_id = self.world_frame_id
+            depth_s2m2_header.frame_id = self._params.world_frame_id
             self.pc_s2m2_msg = pc2.create_cloud_xyz32(depth_s2m2_header, points_s2m2_world)
             
             # Also create point cloud from ICP refined depth

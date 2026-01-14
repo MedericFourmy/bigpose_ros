@@ -1,0 +1,19 @@
+/**:
+  ros__parameters:
+    device: "cuda"
+    object_frame_id: "pylone_est"
+    world_frame_id: "fer_link0"
+    detector_model_id: "openmmlab-community/mm_grounding_dino_base_all"
+    megapose: 
+      mesh_megapose_relative_path: "assets/meshes/pylone_but_better.obj"
+      SO3_grid_size_scale_down: 2
+    s2m2: 
+      model_type: "S"
+      allow_negative: false
+      num_refine: 3
+      torch_compile: false
+    icp:
+      margin_sphere_crop: 1.1
+      voxel_size: 0.005
+      dist_thresh_factor: 3.0
+      icp_method: "point2plane"
