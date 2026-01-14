@@ -40,8 +40,6 @@ from bigpose_ros.icp_utils import create_o3d_poincloud_from_depth, orient_normal
 from bigpose_ros.render_utils import extract_np_from_renderings, DEFAULT_RENDER_PARAMS, render_ts, get_panda3d_ambient
 from bigpose_msgs.srv import GetTransformStamped
 
-MARGIN_SPHERE_CROP = 1.1
-
 # Automatically generated file
 from bigpose_ros.bigpose_ros_parameters import bigpose_ros  # noqa: E402
 
@@ -58,26 +56,17 @@ class BigPoseNode(Node):
             raise e
 
 
-        self._params.object_frame_id = "pylone_est"
-        self._params.world_frame_id = "fer_link0"
-        
-        # ----------------------------
         # Load detector model
         # ----------------------------
-        detector_model_id = "openmmlab-community/mm_grounding_dino_base_all"
-        self.detector = ZeroShotObjectDetector(detector_model_id, self._params.device)
+        self.detector = ZeroShotObjectDetector(self._params.detector_model_id, self._params.device)
 
         # ----------------------------
         # Load Megapose
         # ----------------------------
         package_share_directory = get_package_share_directory('bigpose_ros')
-        self.model_path_obj = os.path.join(package_share_directory, 'assets/meshes/pylone_but_better.obj')
-        # megapose_model_name = "megapose-1.0-RGB"
-        # megapose_model_name = "megapose-1.0-RGB-multi-hypothesis"
-        # megapose_model_name = "megapose-1.0-RGB-multi-hypothesis-bis"
-        megapose_model_name = "megapose-1.0-RGB-multi-hypothesis-icp"
+        self.model_path_obj = os.path.join(package_share_directory, self._params.megapose.mesh_megapose_relative_path)
         self.pose_estimator, self.pose_model_info = create_pose_estimator_pylone(
-            megapose_model_name, 
+            self._params.megapose_model_config, 
             self._params.object_frame_id, 
             self.model_path_obj, 
             self._params.device,
@@ -89,26 +78,21 @@ class BigPoseNode(Node):
         # ----------------------------
         # Load s2m2 stereo depth model
         # ----------------------------
-        model_type = "S"  # select model type: S,M,L,XL
-        allow_negative = False  # TODO: figure out what this is
-        num_refine = 3
-        # most of the compilation time happens 
-        # when the model is first called, which can take > 10s
-        # then, each call is 3-5x faster than non compiled version
-        # TODO: explore disk caching options
-        torch_compile = False 
         assert Path(S2M2_PRETRAINED_WEIGHTS_PATH).exists(), f"S2M2 pretrained weights not found at {S2M2_PRETRAINED_WEIGHTS_PATH}, set S2M2_PRETRAINED_WEIGHTS_PATH env var to the correct path."
         self.model_s2m2 = load_model(
             S2M2_PRETRAINED_WEIGHTS_PATH,
-            model_type,
-            allow_negative,
-            num_refine,
+            self._params.s2m2.model_type,
+            self._params.s2m2.allow_negative,
+            self._params.s2m2.num_refine,
         ).to(self._params.device).eval()
-        if torch_compile:
+        if self._params.torch_compile:
+            # TODO: explore disk caching options
+            # most of the compilation time happens 
+            # when the model is first called, which can take > 10s
+            # then, each call is 3-5x faster than non compiled version
             self.get_logger().info(f"Compiling s2m2 model...")
             self.model_s2m2.compile()
-        # self.model_s2m2 = torch.compile(self.model_s2m2)
-        self.get_logger().info(f"Loaded s2m2 model '{model_type}' on device {self._params.device}")
+        self.get_logger().info(f"Loaded s2m2 model '{self._params.s2m2.model_type}' on device {self._params.device}")
 
         # ---------------------
         # Subscribers Realsense
@@ -147,6 +131,7 @@ class BigPoseNode(Node):
         # ---------------------------------
         # Publishers S2M2 depth (for debug)
         # ---------------------------------
+        # TODO: deal with these hardcoded topics
         topic_depth_info = '/camera/camera/depth_s2m2/camera_info'
         topic_depth_image = '/camera/camera/depth_s2m2/depth'
         self.depth_info_pub = self.create_publisher(CameraInfo, topic_depth_info, 1)
@@ -178,11 +163,6 @@ class BigPoseNode(Node):
         self.marker_pub = self.create_publisher(Marker, 'megapose_detection_marker', 10)
         self.timer_obj_marker = self.create_timer(0.5, self.publish_object_marker_callback)
 
-        # Declare ROS2 dynamic parameters
-        self.declare_parameter('voxel_size', 0.005)
-        self.declare_parameter('dist_thresh_factor', 3.0)
-        self.declare_parameter('icp_method', 'point2plane')
-
     def sync_infra_callback(self,
             infra1_img_msg: Image,
             infra1_info_msg: CameraInfo,
@@ -198,8 +178,8 @@ class BigPoseNode(Node):
         self.infra2_info_msg = infra2_info_msg
 
     def sync_rgb_callback(self,
-        rgb_img_msg: Image,
-        rgb_info_msg: CameraInfo
+            rgb_img_msg: Image,
+            rgb_info_msg: CameraInfo
         ):
         self.get_logger().info("RGB received")
         self.rgb_img_msg = rgb_img_msg
@@ -321,14 +301,13 @@ class BigPoseNode(Node):
 
         # Open3D depth refinement
         # -----------------------
-        voxel_size = self.get_parameter('voxel_size').value
-        dist_thresh_factor = self.get_parameter('dist_thresh_factor').value
-        icp_method = self.get_parameter('icp_method').value
+        voxel_size = self._params.icp.voxel_size
+        dist_threshold = voxel_size*self._params.icp.dist_thresh_factor
 
         # create point cloud from measured depth
         K_infra1 = self.infra1_info_msg.k.reshape((3,3))
         pcd_ct = create_o3d_poincloud_from_depth(depth, K_infra1)
-        pcd_ct = crop_pcd_sphere(pcd_ct, center=T_co_init[:3,3], radius=self.mesh_radius, margin=MARGIN_SPHERE_CROP)
+        pcd_ct = crop_pcd_sphere(pcd_ct, center=T_co_init[:3,3], radius=self.mesh_radius, margin=self._params.icp.margin_sphere_crop)
         pcd_ct.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(3.0*voxel_size, 40))
 
         # create point cloud from object model (render then backproject)
@@ -341,7 +320,7 @@ class BigPoseNode(Node):
         # ICP refinement
         pcd_cp = pcd_cp.voxel_down_sample(voxel_size=voxel_size)
         pcd_ct = pcd_ct.voxel_down_sample(voxel_size=voxel_size)
-        icp_res_ct_cp = icp_registration_o3d(pcd_cp, pcd_ct, np.eye(4), dist_thresh_factor*voxel_size, icp_method, ICPConvergeCriteria())
+        icp_res_ct_cp = icp_registration_o3d(pcd_cp, pcd_ct, np.eye(4), dist_threshold, self._params.icp.icp_method, ICPConvergeCriteria())
         T_ct_cp_icp = icp_res_ct_cp.transformation
         T_co_ref = T_ct_cp_icp @ T_co_init
 

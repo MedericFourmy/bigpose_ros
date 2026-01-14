@@ -20,6 +20,11 @@ bigpose_ros:
     description: "Huggingface id of the zero-shot 2d object detector."
     read_only: true
   megapose:
+    megapose_model_config:
+      type: string
+      default_value: "megapose-1.0-RGB-multi-hypothesis-icp"
+      description: "Name of the megapose config used."
+      read_only: true
     mesh_megapose_relative_path:
       type: string
       default_value: "assets/meshes/pylone_but_better.obj"
