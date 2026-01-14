@@ -65,13 +65,21 @@ class BigPoseNode(Node):
         # ----------------------------
         package_share_directory = get_package_share_directory('bigpose_ros')
         self.model_path_obj = os.path.join(package_share_directory, self._params.megapose.mesh_megapose_relative_path)
-        self.pose_estimator, self.pose_model_info = create_pose_estimator_pylone(
-            self._params.megapose.megapose_model_config,
-            self._params.object_frame_id, 
-            self.model_path_obj, 
-            self._params.device,
-            SO3_grid_size_scale_down=2
-        )
+        params_pose_est = {
+            "model_name": self._params.megapose.megapose_model_config,
+            "object_label": self._params.object_frame_id,
+            "mesh_path": self.model_path_obj,
+            "device": self._params.device,
+            "SO3_grid_size_scale_down": self._params.megapose.SO3_grid_size_scale_down,
+        }
+        self.run_icp_with_different_mesh = False
+        if self._params.icp.use_different_mesh_for_icp and len(self._params.icp.mesh_icp_relative_path) > 0:
+            self.object_label_icp = self._params.object_frame_id+"_icp"
+            params_pose_est["mesh_path_icp"] = os.path.join(package_share_directory, self._params.icp.mesh_icp_relative_path)
+            params_pose_est["object_label_icp"] = self.object_label_icp
+            self.run_icp_with_different_mesh = True
+
+        self.pose_estimator, self.pose_model_info = create_pose_estimator_pylone(**params_pose_est)
         self.renderer = self.pose_estimator.refiner_model.renderer
         self.light_datas = [get_panda3d_ambient()]
 
@@ -311,7 +319,11 @@ class BigPoseNode(Node):
         pcd_ct.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(3.0*voxel_size, 40))
 
         # create point cloud from object model (render then backproject)
-        renderings = self.renderer.render([self._params.object_frame_id], render_ts(T_co_init), render_ts(K_infra1), [self.light_datas], (h, w), **DEFAULT_RENDER_PARAMS)
+        if self.run_icp_with_different_mesh:
+            mesh_id = self.object_label_icp
+        else:
+            mesh_id = self._params.object_frame_id
+        renderings = self.renderer.render([mesh_id], render_ts(T_co_init), render_ts(K_infra1), [self.light_datas], (h, w), **DEFAULT_RENDER_PARAMS)
         ren = extract_np_from_renderings(renderings, 0)
         pcd_cp = create_o3d_poincloud_from_depth(ren["depth"], K_infra1)
         pcd_cp.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(3.0*voxel_size, 40))

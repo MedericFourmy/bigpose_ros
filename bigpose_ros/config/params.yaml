@@ -14,6 +14,8 @@
       num_refine: 3
       torch_compile: false
     icp:
+      use_different_mesh_for_icp: true
+      mesh_icp_relative_path: "assets/meshes/pylone_icp_metal_2parts.obj"
       margin_sphere_crop: 1.1
       voxel_size: 0.005
       dist_thresh_factor: 3.0

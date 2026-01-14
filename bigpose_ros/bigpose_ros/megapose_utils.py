@@ -150,28 +150,49 @@ def dets_2_happydets(bboxes, scores, labels) -> DetectionsType:
 
 
 def create_pose_estimator_pylone(
-        model_name: str, 
+        model_config: str, 
         object_label: str,
         mesh_path: str | Path, 
         device: str,
-        SO3_grid_size_scale_down: int = 1 
+        SO3_grid_size_scale_down: int = 1,
+        mesh_path_icp: str | None = None,
+        object_label_icp: str | None = None,
     ) -> tuple[PoseEstimator, dict]:
+    """_summary_
+
+    Args:
+        model_config (str): Name of the megapose config used 
+        object_label (str): Label of the object mesh used by megapose. 
+        mesh_path (str | Path): Path of the object mesh used by megapose.
+        device (str): device used to run megapose
+        SO3_grid_size_scale_down (int, optional): Factor scaling down the number of coarse renders (the higher, the faster but the less precise).. Defaults to 1.
+        mesh_path_icp (str | None, optional): Path of the object mesh used by the icp step (slightly different, doesn't need texture). If None, no additional mesh added to the renderer collection.
+        object_label_icp (str | None, optional): Label of the object used by the icp step, used when calling the renderer API. If None, ignored.
+
+    Returns:
+        tuple[PoseEstimator, dict]: _description_
+    """
 
     ########
     # Init MEGAPOSE
-    object_dataset = RigidObjectDataset(
-        objects=[
+    objects = [
+        RigidObject(
+            label=object_label, mesh_path=mesh_path, mesh_units="m"
+        )
+    ]
+    if mesh_path_icp is not None:
+        objects.append(
             RigidObject(
-                label=object_label, mesh_path=mesh_path, mesh_units="m"
+                label=object_label_icp, mesh_path=mesh_path_icp, mesh_units="m"
             )
-        ]
-    )
+        )
+    object_dataset = RigidObjectDataset(objects=objects)
 
-    pose_model_info = NAMED_MODELS[model_name]
+    pose_model_info = NAMED_MODELS[model_config]
     pose_model_info["bsz_objects"] = 32  # How many parallel refiners to run
     pose_model_info["bsz_images"] = 576  # How many images to push through coarse model
     n_workers = 16  # number of renderer workers8
-    pose_estimator = load_named_model(model_name, object_dataset, n_workers)
+    pose_estimator = load_named_model(model_config, object_dataset, n_workers)
     pose_estimator = pose_estimator.to(device)
     pose_estimator._SO3_grid = pose_estimator._SO3_grid[::SO3_grid_size_scale_down]
 

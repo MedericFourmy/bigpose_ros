@@ -63,6 +63,16 @@ bigpose_ros:
       description: "Compile the s2m2 model (takes a long time during first call, then much faster)."
       read_only: true
   icp:
+    use_different_mesh_for_icp:
+      type: bool
+      default_value: true
+      description: "Use a different mesh than megapose for the ICP refinement step."
+      read_only: true
+    mesh_icp_relative_path:
+      type: string
+      default_value: "assets/meshes/pylone_icp_metal_2parts.obj"
+      description: "Path of the object mesh used by the ICP refiner, relative to the bigpose_ros package."
+      read_only: true
     margin_sphere_crop:
       type: double
       default_value: 1.1
