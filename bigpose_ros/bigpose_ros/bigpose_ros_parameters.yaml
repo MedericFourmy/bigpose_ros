@@ -70,8 +70,6 @@ bigpose_ros:
       default_value: 0.005
       description: "Voxel size used by open3d when downsampling the measured and rendered pointclouds."
       read_only: true
-      validation:
-        gt_eq<>: [1]
     dist_thresh_factor:
       type: double
       default_value: 3.0
