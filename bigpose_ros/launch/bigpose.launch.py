@@ -29,16 +29,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            "camera_namespace",
-            default_value="camera",
-            description="Namespace for the camera"
-        ),
-        DeclareLaunchArgument(
-            "camera_name",
-            default_value="camera",
-            description="Name of the camera"
-        ),
-        DeclareLaunchArgument(
             "launch_rviz",
             default_value="false",
             description="Launch rviz2 with debug configuration"
@@ -54,14 +44,13 @@ def generate_launch_description():
             name="bigpose_node",
             output="screen",
             parameters=[params_file],
-            namespace=LaunchConfiguration("camera_namespace"),
             remappings=[
-                ("color/image_raw", [LaunchConfiguration("camera_name"), "/color/image_raw"]),
-                ("color/camera_info", [LaunchConfiguration("camera_name"), "/color/camera_info"]),
-                ("infra1/image_rect_raw", [LaunchConfiguration("camera_name"), "/infra1/image_rect_raw"]),
-                ("infra1/camera_info", [LaunchConfiguration("camera_name"), "/infra1/camera_info"]),
-                ("infra2/image_rect_raw", [LaunchConfiguration("camera_name"), "/infra2/image_rect_raw"]),
-                ("infra2/camera_info", [LaunchConfiguration("camera_name"), "/infra2/camera_info"]),
+                ("color/image_raw", ["/camera/camera/color/image_raw"]),
+                ("color/camera_info", ["/camera/camera/color/camera_info"]),
+                ("infra1/image_rect_raw", ["/camera/camera/infra1/image_rect_raw"]),
+                ("infra1/camera_info", ["/camera/camera/infra1/camera_info"]),
+                ("infra2/image_rect_raw", ["/camera/camera/infra2/image_rect_raw"]),
+                ("infra2/camera_info", ["/camera/camera/infra2/camera_info"]),
             ],
         ),
         Node(

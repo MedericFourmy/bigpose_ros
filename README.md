@@ -44,12 +44,12 @@ ros2 launch bigpose_ros bigpose.launch.py launch_rviz:=true
 ```
 
 bigpose_ros exposes 2 main services:
-- `/detect` runs 2D detection and 3D pose estimation. The pose is stored in the node and published on \tf (see `object_frame_id` parameter):
+- `/bigpose_ros/detect` runs 2D detection and 3D pose estimation. The pose is stored in the node and published on \tf (see `object_frame_id` parameter):
 ```bash
-ros2 service call /detect std_srvs/srv/Trigger {} 
+ros2 service call /bigpose_ros/detect std_srvs/srv/Trigger {} 
 ```
 
-- `/refine` refines the pose using stereo depth estimation and ICP  
+- `/bigpose_ros/refine` refines the pose using stereo depth estimation and ICP  
 ```bash
-ros2 service call /refine bigpose_msgs/srv/GetTransformStamped 
+ros2 service call /bigpose_ros/refine bigpose_msgs/srv/GetTransformStamped 
 ```

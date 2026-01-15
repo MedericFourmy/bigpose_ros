@@ -66,7 +66,7 @@ class BigPoseNode(Node):
         package_share_directory = get_package_share_directory('bigpose_ros')
         self.model_path_obj = os.path.join(package_share_directory, self._params.megapose.mesh_megapose_relative_path)
         params_pose_est = {
-            "model_config": self._params.megapose.megapose_model_config,
+            "model_config": self._params.megaposREADME.mdig,
             "object_label": self._params.object_frame_id,
             "mesh_path": self.model_path_obj,
             "device": self._params.device,
@@ -157,8 +157,8 @@ class BigPoseNode(Node):
         # ----------------------------------
         # Detect/Refine object pose services
         # ----------------------------------
-        self.detect_object_srv = self.create_service(Trigger, 'detect', self.detect_object_callback)
-        self.refine_object_srv = self.create_service(GetTransformStamped, 'refine', self.refine_object_callback)
+        self.detect_object_srv = self.create_service(Trigger, 'bigpose_ros/detect', self.detect_object_callback)
+        self.refine_object_srv = self.create_service(GetTransformStamped, 'bigpose_ros/refine', self.refine_object_callback)
         self.timer_obj_tf = self.create_timer(0.1, self.publish_object_tf_callback)  # 10 Hz
         self.tf_stamped_wo: TransformStamped | None = None
 
@@ -170,6 +170,8 @@ class BigPoseNode(Node):
 
         self.marker_pub = self.create_publisher(Marker, 'megapose_detection_marker', 10)
         self.timer_obj_marker = self.create_timer(0.5, self.publish_object_marker_callback)
+
+        self.get_logger().info(f"Bigpose is ready!")
 
     def sync_infra_callback(self,
             infra1_img_msg: Image,

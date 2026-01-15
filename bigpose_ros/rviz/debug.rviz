@@ -4,9 +4,6 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
-        - /Global Options1
-        - /s2m2 PointCloud21
-        - /s2m2 ICP PointCloud21
         - /TF1/Tree1
       Splitter Ratio: 0.5
     Tree Height: 584
@@ -27,7 +24,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: rs435 PointCloud2
+    SyncSource: s2m2 ICP PointCloud2
 Visualization Manager:
   Class: ""
   Displays:
@@ -232,8 +229,6 @@ Visualization Manager:
           Value: true
         fer_ref_camera_link:
           Value: true
-        pylone_est:
-          Value: true
         pylone_link:
           Value: true
         pylone_sc_link:
@@ -277,8 +272,6 @@ Visualization Manager:
                                     camera_infra2_frame:
                                       camera_infra2_optical_frame:
                                         {}
-            pylone_est:
-              {}
             pylone_link:
               base_box_link:
                 table_link:
@@ -298,7 +291,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /camera/megapose_detection_marker
+        Value: /megapose_detection_marker
       Value: true
   Enabled: true
   Global Options:
@@ -346,25 +339,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 1.1108955144882202
+      Distance: 1.430643916130066
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0.26277413964271545
-        Y: -0.6001182794570923
-        Z: 0.8260656595230103
+        X: 0.5710712671279907
+        Y: -0.49824002385139465
+        Z: 0.5866941213607788
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.2947964370250702
+      Pitch: 0.30979645252227783
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 1.9054266214370728
+      Yaw: 2.0954294204711914
     Saved: ~
 Window Geometry:
   Displays:
