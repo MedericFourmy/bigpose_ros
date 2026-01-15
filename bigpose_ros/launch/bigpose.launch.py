@@ -48,11 +48,6 @@ def generate_launch_description():
             default_value=rviz_config_file,
             description="Path to a file containing RViz view configuration.",
         ),
-        DeclareLaunchArgument(
-            "use_rviz",
-            default_value="false",
-            description="Launch RViz with default view.",
-        ),
         Node(
             package="bigpose_ros",
             executable="bigpose_node",
