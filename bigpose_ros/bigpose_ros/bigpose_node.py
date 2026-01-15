@@ -75,7 +75,8 @@ class BigPoseNode(Node):
         self.run_icp_with_different_mesh = False
         if self._params.icp.use_different_mesh_for_icp and len(self._params.icp.mesh_icp_relative_path) > 0:
             self.object_label_icp = self._params.object_frame_id+"_icp"
-            params_pose_est["mesh_path_icp"] = os.path.join(package_share_directory, self._params.icp.mesh_icp_relative_path)
+            self.mesh_path_icp = os.path.join(package_share_directory, self._params.icp.mesh_icp_relative_path)
+            params_pose_est["mesh_path_icp"] = self.mesh_path_icp
             params_pose_est["object_label_icp"] = self.object_label_icp
             self.run_icp_with_different_mesh = True
 
@@ -434,7 +435,12 @@ class BigPoseNode(Node):
 
     def publish_object_marker_callback(self):
         if self.tf_stamped_wo is not None:
-            marker_object_mesh = make_mesh_marker("file://"+self.model_path_obj, self.tf_stamped_wo)
+            if self.run_icp_with_different_mesh:
+                mesh_path_marker = "file://"+self.mesh_path_icp
+            else:
+                mesh_path_marker = "file://"+self.model_path_obj
+
+            marker_object_mesh = make_mesh_marker(mesh_path_marker, self.tf_stamped_wo)
             self.marker_pub.publish(marker_object_mesh)
 
 
