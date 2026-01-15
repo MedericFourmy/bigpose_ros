@@ -66,7 +66,7 @@ class BigPoseNode(Node):
         package_share_directory = get_package_share_directory('bigpose_ros')
         self.model_path_obj = os.path.join(package_share_directory, self._params.megapose.mesh_megapose_relative_path)
         params_pose_est = {
-            "model_config": self._params.megaposREADME.mdig,
+            "model_config": self._params.megapose.megapose_model_config,
             "object_label": self._params.object_frame_id,
             "mesh_path": self.model_path_obj,
             "device": self._params.device,
