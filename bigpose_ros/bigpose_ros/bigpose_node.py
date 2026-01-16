@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
 import os
-import math
 from pathlib import Path
-import time
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -11,6 +9,7 @@ import numpy as np
 import quaternion
 import open3d as o3d
 import trimesh  
+import pinocchio as pin
 
 from s2m2.s2m2 import load_model
 from s2m2.config import S2M2_PRETRAINED_WEIGHTS_PATH
@@ -335,6 +334,24 @@ class BigPoseNode(Node):
         pcd_ct = pcd_ct.voxel_down_sample(voxel_size=voxel_size)
         icp_res_ct_cp = icp_registration_o3d(pcd_cp, pcd_ct, np.eye(4), dist_threshold, self._params.icp.icp_method, ICPConvergeCriteria())
         T_ct_cp_icp = icp_res_ct_cp.transformation
+
+        # ICP outlier rejection
+        dt_norm = np.linalg.norm(T_ct_cp_icp[:3,3])
+        dr_norm_deg = np.rad2deg(np.linalg.norm(pin.log3(T_ct_cp_icp[:3,:3])))
+        if dt_norm > self._params.icp.reject.translation_th:
+            msg = f"ICP refinement exceeded translation threshold {dt_norm} > {self._params.icp.reject.translation_th}"
+            self.get_logger().error(msg)
+            response.success = False
+            response.message = msg
+            return response
+        if dr_norm_deg > self._params.icp.reject.rotation_th:
+            msg = f"ICP refinement exceeded rotation threshold {dr_norm_deg} > {self._params.icp.reject.rotation_th}"
+            self.get_logger().error(msg)
+            response.success = False
+            response.message = msg
+            return response
+
+
         T_co_ref = T_ct_cp_icp @ T_co_init
 
         # update tf object pose and set the service response
@@ -532,7 +549,7 @@ def make_mesh_marker(mesh_path: str, tf: TransformStamped):
     marker.color.r = 1.0
     marker.color.g = 1.0
     marker.color.b = 1.0
-    marker.color.a = 1.0
+    marker.color.a = 0.8
 
     marker.action = Marker.ADD
     return marker

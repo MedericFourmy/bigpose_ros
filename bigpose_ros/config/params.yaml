@@ -20,3 +20,6 @@
       voxel_size: 0.005
       dist_thresh_factor: 3.0
       icp_method: "point2plane"
+      reject:
+        translation_th: 0.05
+        rotation_th: 10

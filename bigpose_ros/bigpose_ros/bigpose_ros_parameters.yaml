@@ -97,3 +97,14 @@ bigpose_ros:
       read_only: true
       validation:
         one_of<>: [["point2point","point2plane","generalized"]]
+    reject:
+      translation_th:
+        type: double
+        default_value: 0.05
+        description: "Threshold on translation update for ICP refinement (meters), refinement is rejected if this threshold is violated."
+        read_only: false
+      rotation_th:
+        type: double
+        default_value: 10
+        description: "Threshold on rotation update for ICP refinement (degrees), refinement is rejected if this threshold is violated."
+        read_only: false

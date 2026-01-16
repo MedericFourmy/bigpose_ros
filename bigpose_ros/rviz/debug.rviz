@@ -5,6 +5,9 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /TF1/Tree1
+        - /color1
+        - /infra11
+        - /infra21
       Splitter Ratio: 0.5
     Tree Height: 584
   - Class: rviz_common/Selection
@@ -24,7 +27,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: ""
+    SyncSource: s2m2 ICP PointCloud2
 Visualization Manager:
   Class: ""
   Displays:
@@ -256,7 +259,7 @@ Visualization Manager:
       Far Plane Distance: 100
       Image Rendering: background and overlay
       Name: color
-      Overlay Alpha: 0.5
+      Overlay Alpha: 0.800000011920929
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -279,7 +282,7 @@ Visualization Manager:
       Far Plane Distance: 100
       Image Rendering: background and overlay
       Name: infra1
-      Overlay Alpha: 0.5
+      Overlay Alpha: 0.800000011920929
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -302,7 +305,7 @@ Visualization Manager:
       Far Plane Distance: 100
       Image Rendering: background and overlay
       Name: infra2
-      Overlay Alpha: 0.5
+      Overlay Alpha: 0.800000011920929
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -366,7 +369,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 2.5212833881378174
+      Distance: 1.2495884895324707
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -381,10 +384,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.044796496629714966
+      Pitch: 0.4047965109348297
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 2.2854321002960205
+      Yaw: 2.0604300498962402
     Saved: ~
 Window Geometry:
   Displays:
