@@ -28,7 +28,10 @@ setup(
         (f"share/{package_name}/config", glob("config/*")),
         (f"share/{package_name}/rviz", glob("rviz/*")),
     ],
-    install_requires=["setuptools"],
+    install_requires=[
+        "setuptools",
+        "transformers",
+    ],
     zip_safe=True,
     maintainer="Mederic Fourmy",
     maintainer_email="mederic.fourmy@gmail.com",
