@@ -136,11 +136,12 @@ class BigPoseNode(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = TransformBroadcaster(self)
+        self.baseline = None
 
         # ---------------------------------
         # Publishers S2M2 depth (for debug)
         # ---------------------------------
-        # TODO: deal with these hardcoded topics
+        # TODO: make these absolute topics relative
         topic_depth_info = '/camera/camera/depth_s2m2/camera_info'
         topic_depth_image = '/camera/camera/depth_s2m2/depth'
         self.depth_info_pub = self.create_publisher(CameraInfo, topic_depth_info, 1)
@@ -161,7 +162,7 @@ class BigPoseNode(Node):
         self.detect_object_srv = self.create_service(Trigger, 'bigpose_ros/detect', self.detect_object_callback)
         self.refine_object_srv = self.create_service(GetTransformStamped, 'bigpose_ros/refine', self.refine_object_callback)
         self.timer_obj_tf = self.create_timer(0.1, self.publish_object_tf_callback)  # 10 Hz
-        self.tf_stamped_wo: TransformStamped | None = None
+        self.tf_world_object: TransformStamped | None = None
 
         # --------------------
         # reading object model
@@ -169,7 +170,7 @@ class BigPoseNode(Node):
         mesh = trimesh.load(self.model_path_obj)
         self.mesh_radius = mesh.bounding_sphere.primitive.radius
 
-        self.marker_pub = self.create_publisher(Marker, 'megapose_detection_marker', 10)
+        self.marker_pub = self.create_publisher(Marker, 'bigpose_ros/object_detection_marker', 10)
         self.timer_obj_marker = self.create_timer(0.5, self.publish_object_marker_callback)
 
         self.get_logger().info(f"Bigpose is ready!")
@@ -251,13 +252,13 @@ class BigPoseNode(Node):
         # compose forward kinematics and object estimation to get object in "world" frame
         T_wo = T_wc @ T_co
 
-        tf_stamped_wo = TransformStamped()
-        tf_stamped_wo.header = Header()
-        tf_stamped_wo.header.stamp = self.rgb_img_msg.header.stamp
-        tf_stamped_wo.header.frame_id = self._params.world_frame_id
-        tf_stamped_wo.child_frame_id = self._params.object_frame_id
-        tf_stamped_wo.transform = np_mat_to_transform(T_wo)
-        self.tf_stamped_wo = tf_stamped_wo  # update attribute -> will be published on tf
+        tf_world_object = TransformStamped()
+        tf_world_object.header = Header()
+        tf_world_object.header.stamp = self.rgb_img_msg.header.stamp
+        tf_world_object.header.frame_id = self._params.world_frame_id
+        tf_world_object.child_frame_id = self._params.object_frame_id
+        tf_world_object.transform = np_mat_to_transform(T_wo)
+        self.tf_world_object = tf_world_object  # update attribute -> will be published on tf
 
         response.message = "Object detection successful!"
         response.success = True
@@ -266,7 +267,7 @@ class BigPoseNode(Node):
     def refine_object_callback(self, request: GetTransformStamped.Request, response: GetTransformStamped.Response):
         self.get_logger().warn("refine_object_callback")
 
-        if self.tf_stamped_wo is None:
+        if self.tf_world_object is None:
             self.get_logger().error("Object pose was not initialized, cannot refine!!")
             response.success = False
             response.message = "Object pose was not initialized, cannot refine!!"
@@ -275,8 +276,9 @@ class BigPoseNode(Node):
         infra1_frame = self.infra1_img_msg.header.frame_id
         infra2_frame = self.infra2_img_msg.header.frame_id
         img_time = self.infra1_img_msg.header.stamp
-        baseline = self.get_stereo_baseline(infra1_frame, infra2_frame, self.infra1_img_msg.header.stamp)
-        if baseline is None:
+        if self.baseline is None:
+            self.baseline = self.get_stereo_baseline(infra1_frame, infra2_frame, self.infra1_img_msg.header.stamp)
+        if self.baseline is None:
             self.get_logger().error("Couldn't read stereo baseline, returning")
             response.success = False
             response.message = "Couldn't read stereo baseline, returning"
@@ -284,20 +286,16 @@ class BigPoseNode(Node):
 
         # get current T_camera_object transform
         # -------------------------------------
-        tf_infra1_object = self.get_tf(infra1_frame, self._params.object_frame_id, img_time)
         tf_world_infra1 = self.get_tf(self._params.world_frame_id, infra1_frame, img_time)
-        if tf_infra1_object is None:
-            self.get_logger().error("Couldn't read tf_infra1_object transform")
         if tf_world_infra1 is None:
             self.get_logger().error("Couldn't read tf_world_infra1 transform")
-        if tf_infra1_object is None or tf_world_infra1 is None:
             response.success = False
-            response.message = "Couldn't read required transforms, returning"
+            response.message = "Couldn't read tf_world_infra1 transform, returning"
             return response
 
-        T_co_init = transform_to_np_mat(tf_infra1_object.transform)
+        T_wo_init = transform_to_np_mat(self.tf_world_object.transform) 
         T_wc = transform_to_np_mat(tf_world_infra1.transform)
-        # T_wo_init = transform_to_np_mat(self.tf_stamped_wo.transform)  # for debug?
+        T_co_init = inverse_se3(T_wc) @ T_wo_init
 
         # S2M2 depth prediction
         # ---------------------
@@ -307,7 +305,7 @@ class BigPoseNode(Node):
         h, w = infra1.shape 
         disp = get_disparity_map(self.model_s2m2, infra1, infra2, self._params.device)  # (H,W), f32
         fx = self.infra1_info_msg.k[0]
-        depth = baseline * fx / disp  # metric depth
+        depth = self.baseline * fx / disp  # metric depth
         depth = depth.cpu().numpy()  # fp32
 
         # Open3D depth refinement
@@ -343,15 +341,15 @@ class BigPoseNode(Node):
         # --------------------------------------------------
         T_wo_refined = T_wc @ T_co_ref
 
-        tf_stamped_wo = TransformStamped()
-        tf_stamped_wo.header = Header()
-        tf_stamped_wo.header.stamp = self.infra1_img_msg.header.stamp
-        tf_stamped_wo.header.frame_id = self._params.world_frame_id
-        tf_stamped_wo.child_frame_id = self._params.object_frame_id
-        tf_stamped_wo.transform = np_mat_to_transform(T_wo_refined)
+        tf_world_object = TransformStamped()
+        tf_world_object.header = Header()
+        tf_world_object.header.stamp = self.infra1_img_msg.header.stamp
+        tf_world_object.header.frame_id = self._params.world_frame_id
+        tf_world_object.child_frame_id = self._params.object_frame_id
+        tf_world_object.transform = np_mat_to_transform(T_wo_refined)
 
-        self.tf_stamped_wo = tf_stamped_wo  # update attribute -> will be published on tf
-        response.transform = tf_stamped_wo  # also placed in the response
+        self.tf_world_object = tf_world_object  # update attribute -> will be published on tf
+        response.transform = tf_world_object  # also placed in the response
         response.success = True
         response.message = "Refinement successful!"
 
@@ -391,11 +389,11 @@ class BigPoseNode(Node):
             return None
         
     def publish_object_tf_callback(self):
-        if self.tf_stamped_wo is not None:
+        if self.tf_world_object is not None:
             # update timestamp of object transform using
             # latest received RGB frame timestamp
-            self.tf_stamped_wo.header.stamp = self.infra1_img_msg.header.stamp
-            self.tf_broadcaster.sendTransform(self.tf_stamped_wo)
+            self.tf_world_object.header.stamp = self.infra1_img_msg.header.stamp
+            self.tf_broadcaster.sendTransform(self.tf_world_object)
 
     def publish_object_s2m2_debug(self):
         if self.depth_s2m2 is None or self.pcd_ct is None: return
@@ -434,13 +432,13 @@ class BigPoseNode(Node):
         self.pc_icp_pub.publish(self.pc_icp_msg)
 
     def publish_object_marker_callback(self):
-        if self.tf_stamped_wo is not None:
+        if self.tf_world_object is not None:
             if self.run_icp_with_different_mesh:
                 mesh_path_marker = "file://"+self.mesh_path_icp
             else:
                 mesh_path_marker = "file://"+self.model_path_obj
 
-            marker_object_mesh = make_mesh_marker(mesh_path_marker, self.tf_stamped_wo)
+            marker_object_mesh = make_mesh_marker(mesh_path_marker, self.tf_world_object)
             self.marker_pub.publish(marker_object_mesh)
 
 
@@ -463,6 +461,13 @@ def transform_to_np_mat(transform: Transform) -> np.ndarray:
     # Convert quaternion to rotation matrix
     mat[:3,:3] = quaternion.as_rotation_matrix(np.quaternion(q.w, q.x, q.y, q.z))
     return mat
+
+
+def inverse_se3(T: np.ndarray):
+    T_inv = np.eye(4)
+    T_inv[:3,:3] = T[:3,:3].T
+    T_inv[:3,3] = -T[:3,:3].T @ T[:3,3]
+    return T_inv
 
 
 def np_mat_to_transform(mat: np.ndarray) -> Transform:
@@ -543,3 +548,31 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
+
+
+# [bigpose_node-1] [INFO] [1768571180.371182504] [bigpose_node]: T_wc: 
+# [bigpose_node-1] [[-0.11663425 -0.59962013  0.79173995 -0.31597204]
+# [bigpose_node-1]  [-0.05234108 -0.79236194 -0.60780175  0.50925493]
+# [bigpose_node-1]  [ 0.99179477 -0.11233103  0.06103178  0.83184457]
+# [bigpose_node-1]  [ 0.          0.          0.          1.        ]]
+# [bigpose_node-1] [INFO] [1768571180.371415796] [bigpose_node]: T_wo: 
+# [bigpose_node-1] [[ 0.99603363 -0.08540442 -0.02496201  0.48358051]
+# [bigpose_node-1]  [ 0.0847467   0.99605492 -0.02631702 -0.05082718]
+# [bigpose_node-1]  [ 0.02711112  0.02409719  0.99934194  0.73766623]
+# [bigpose_node-1]  [ 0.          0.          0.          1.        ]]
+# [bigpose_node-1] [INFO] [1768571180.371654881] [bigpose_node]: T_co_init_TF: 
+# [bigpose_node-1] [[-0.0937187  -0.01827404  0.99543099 -0.1573455 ]
+# [bigpose_node-1]  [-0.66743729 -0.74073267 -0.07643678 -0.02506091]
+# [bigpose_node-1]  [ 0.73874506 -0.67155132  0.05722373  0.96770871]
+# [bigpose_node-1]  [ 0.          0.          0.          1.        ]]
+# [bigpose_node-1] [INFO] [1768571180.371878541] [bigpose_node]: T_co_init: 
+# [bigpose_node-1] [[-0.11617164  0.00447016 -0.02475719 -0.40389481]
+# [bigpose_node-1]  [-0.05081583 -0.78923601  0.00295622 -0.015629  ]
+# [bigpose_node-1]  [ 0.02146496 -0.01464631  0.06099162  0.37541662]
+# [bigpose_node-1]  [ 0.          0.          0.          1.        ]]
+# [bigpose_node-1] [INFO] [1768571180.372099856] [bigpose_node]: DIFF: 
+# [bigpose_node-1] [[ 0.06066097  0.51552671  0.04540438 -0.42074178]
+# [bigpose_node-1]  [ 0.02534905  0.59436696 -0.04269635  0.39527347]
+# [bigpose_node-1]  [-0.11052835  0.06393828 -0.02137987 -0.28003693]
+# [bigpose_node-1]  [ 0.          0.          0.          1.        ]]

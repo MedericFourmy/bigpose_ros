@@ -249,7 +249,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /megapose_detection_marker
+        Value: bigpose_ros/object_detection_marker
       Value: true
     - Class: rviz_default_plugins/Camera
       Enabled: true
