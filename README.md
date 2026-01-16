@@ -5,7 +5,12 @@ Follow installation and setup described in:
 - [happypose](https://github.com/agimus-project/happypose)
 - [s2m2](https://github.com/MedericFourmy/s2m2)
 
-Install additional dependencies in `requirements.txt`.
+Install additional dependencies in `requirements.txt`.  
+Download the open set 2D detector you want to use, e.g.:
+```
+hf download openmmlab-community/mm_grounding_dino_base_all
+```
+
 Then:  
 ```bash
 colcon build --symlink-install --packages-up-to bigpose_ros

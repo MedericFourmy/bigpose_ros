@@ -24,8 +24,8 @@ class ZeroShotObjectDetector:
         """
         self.device = device
         self.model_id = model_id
-        self.processor = AutoProcessor.from_pretrained(model_id)
-        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(self.device)
+        self.processor = AutoProcessor.from_pretrained(model_id, local_files_only=True)
+        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id, local_files_only=True).to(self.device)
 
     def predict(
             self, 
